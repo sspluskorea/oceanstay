@@ -1325,7 +1325,9 @@
     let wheelLock = false;
     let scrollSyncLocked = false;
     let statusTimer;
+    let savePositionTimer = null;
     const mobileQuery = window.matchMedia('(max-width: 980px)');
+    const positionStorageKey = 'doguOceanstayBrandBookPosition';
 
     pages.forEach((page, i) => {
       const number = String(i + 1).padStart(2, '0');
@@ -1344,6 +1346,59 @@
 
     function isMobileLayout() {
       return mobileQuery.matches;
+    }
+
+    function getMobileIndex() {
+      const viewportPoint = window.scrollY + window.innerHeight * 0.42;
+      return pages.reduce((closest, page, i) => {
+        return Math.abs(page.offsetTop - viewportPoint) < Math.abs(pages[closest].offsetTop - viewportPoint) ? i : closest;
+      }, index);
+    }
+
+    function savePosition() {
+      try {
+        const currentIndex = isMobileLayout() ? getMobileIndex() : index;
+        localStorage.setItem(positionStorageKey, JSON.stringify({
+          index: currentIndex,
+          scrollY: window.scrollY,
+          scrollLeft: track.scrollLeft,
+          savedAt: Date.now()
+        }));
+      } catch (error) {
+        // Storage can be unavailable in private or restricted browser contexts.
+      }
+    }
+
+    function scheduleSavePosition() {
+      window.clearTimeout(savePositionTimer);
+      savePositionTimer = window.setTimeout(savePosition, 120);
+    }
+
+    function restorePosition() {
+      let saved;
+      try {
+        saved = JSON.parse(localStorage.getItem(positionStorageKey) || 'null');
+      } catch (error) {
+        saved = null;
+      }
+      if (!saved) {
+        update();
+        return;
+      }
+      index = Math.max(0, Math.min(pages.length - 1, Number(saved.index) || 0));
+      update();
+      window.requestAnimationFrame(() => {
+        if (isMobileLayout()) {
+          const fallbackTop = pages[index] ? pages[index].offsetTop : 0;
+          const top = Number.isFinite(saved.scrollY) ? saved.scrollY : fallbackTop;
+          window.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
+        } else {
+          const left = Number.isFinite(saved.scrollLeft) ? saved.scrollLeft : pages[index].offsetLeft;
+          scrollSyncLocked = true;
+          track.scrollTo({ left: Math.max(0, left), behavior: 'auto' });
+          window.setTimeout(() => { scrollSyncLocked = false; }, 80);
+        }
+      });
     }
 
     function update() {
@@ -1366,6 +1421,7 @@
         window.setTimeout(() => { scrollSyncLocked = false; }, 80);
       }
       update();
+      scheduleSavePosition();
     }
 
     nextBtn.addEventListener('click', () => goTo(index + 1));
@@ -1410,10 +1466,23 @@
       if (nextIndex !== index) {
         index = Math.max(0, Math.min(pages.length - 1, nextIndex));
         update();
+        scheduleSavePosition();
       }
     });
+    window.addEventListener('scroll', () => {
+      if (!isMobileLayout()) return;
+      const nextIndex = getMobileIndex();
+      if (nextIndex !== index) {
+        index = Math.max(0, Math.min(pages.length - 1, nextIndex));
+        update();
+      }
+      scheduleSavePosition();
+    }, { passive: true });
+    window.addEventListener('pagehide', savePosition);
+    window.addEventListener('beforeunload', savePosition);
     window.addEventListener('resize', () => {
       if (!isMobileLayout()) goTo(index);
+      scheduleSavePosition();
     });
 
     function showSaveStatus(message) {
@@ -1446,8 +1515,9 @@
     saveBtn.addEventListener('click', downloadEmbeddedPdf);
     window.addEventListener('load', () => {
       if (!isMobileLayout()) track.focus({ preventScroll: true });
+      restorePosition();
     });
-    update();
+    restorePosition();
   </script>
 </body>
 </html>
